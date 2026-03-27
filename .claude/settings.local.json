@@ -20,7 +20,12 @@
       "Bash(curl -sI http://localhost:8000/static/assets/index-Dl6Rnz6t.js | head -5)",
       "Bash(npm run build 2>&1)",
       "Bash(npm run build 2>&1 && cat /root/.aworks/pyworks/MultiVision/templates/index.html | head -10)",
-      "Bash(curl -s http://localhost:8000/ | head -15)"
+      "Bash(curl -s http://localhost:8000/ | head -15)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(uv pip:*)",
+      "Bash(uv run:*)",
+      "mcp__figma-remote-mcp__whoami",
+      "mcp__figma-remote-mcp__get_design_context"
     ]
   }
 }

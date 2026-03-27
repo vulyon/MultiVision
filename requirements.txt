@@ -24,5 +24,8 @@ Pillow>=10.0.0
 channels>=4.0
 daphne>=4.0
 
+# GUI
+PyQt6>=6.6.0
+
 # Utilities
 python-dotenv==1.0.0

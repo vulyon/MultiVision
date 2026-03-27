@@ -1,12 +1,14 @@
 """
 Vision Models Handler
 Centralized model management for all vision tasks
+Using OpenCV DNN for object detection (no torch dependency)
 """
 import numpy as np
 import cv2
 import base64
+import os
 from typing import Dict, Any, Optional, List
-import torch
+from pathlib import Path
 
 
 class BaseVisionModel:
@@ -23,7 +25,7 @@ class BaseVisionModel:
 
 
 class ObjectDetector(BaseVisionModel):
-    """Object detection using DETR"""
+    """Object detection using YOLOv3 via OpenCV DNN"""
 
     COCO_LABELS = [
         "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
@@ -43,49 +45,153 @@ class ObjectDetector(BaseVisionModel):
 
     def __init__(self):
         super().__init__("detector")
-        self.processor = None
+        self.model = None  # Will store the DNN net
+        self.output_layers = None
+
+    def load_model(self):
+        """Load YOLOv3 model using OpenCV DNN"""
+        try:
+            # Try to download models if not exists
+            self._ensure_model_files()
+
+            # Load YOLOv3
+            weights_path = self._get_model_path("yolov3.weights")
+            config_path = self._get_model_path("yolov3.cfg")
+
+            if not os.path.exists(weights_path):
+                print(f"YOLO weights not found at {weights_path}, using fallback detector")
+                return False
+
+            self.model = cv2.dnn.readNetFromDarknet(config_path, weights_path)
+            self.model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            self.model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+            # Get output layer names
+            self.output_layers = [layer.name for layer in self.model.getLayerNames()
+                                  if layer.type == 'Region']
+
+            print("Loaded: YOLOv3 Object Detector")
+            return True
+        except Exception as e:
+            print(f"Failed to load YOLO: {e}")
+            return False
+
+    def _ensure_model_files(self):
+        """Ensure model files exist"""
+        model_dir = Path(__file__).parent / "models"
+        model_dir.mkdir(exist_ok=True)
+
+    def _get_model_path(self, filename: str) -> str:
+        """Get path to model file"""
+        return str(Path(__file__).parent / "models" / filename)
 
     def process(self, image: np.ndarray, threshold: float = 0.5) -> Dict[str, Any]:
         if self.model is None:
-            return {"error": "Model not loaded", "success": False}
+            # Try to load if not loaded
+            if not self.load_model():
+                return {"error": "Model not loaded. Please download yolov3.weights", "success": False}
 
         try:
-            from transformers import DetrImageProcessor, DetrForObjectDetection
-            from PIL import Image
+            h, w = image.shape[:2]
 
-            # Convert BGR to RGB
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            # Create blob
+            blob = cv2.dnn.blobFromImage(image, 1/255.0, (416, 416), swapRB=True, crop=False)
+            self.model.setInput(blob)
 
-            # Process
-            inputs = self.processor(
-                images=Image.fromarray(image_rgb),
-                return_tensors="pt"
-            ).to(self.device)
+            # Get outputs
+            outputs = self.model.forward(self.output_layers if self.output_layers
+                                         else [layer.name for layer in self.model.getLayerNames()])
 
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-
-            from transformers import DetrImageProcessor
-            target_sizes = torch.tensor([image_rgb.shape[:2]])
-            results = self.processor.post_process_object_detection(
-                outputs,
-                target_sizes=target_sizes,
-                threshold=threshold
-            )[0]
-
+            # Parse detections
             boxes, scores, labels = [], [], []
-            for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
-                boxes.append(box.cpu().numpy().tolist())
-                scores.append(float(score.cpu().numpy()))
-                label_idx = int(label.cpu().numpy())
-                labels.append(self.COCO_LABELS[label_idx] if label_idx < len(self.COCO_LABELS) else f"class_{label_idx}")
+
+            # YOLO outputs from 3 scales
+            for output in outputs:
+                for detection in output:
+                    scores_det = detection[5:]
+                    class_id = np.argmax(scores_det)
+                    confidence = scores_det[class_id]
+
+                    if confidence > threshold:
+                        center_x, center_y = int(detection[0] * w), int(detection[1] * h)
+                        box_w, box_h = int(detection[2] * w), int(detection[3] * h)
+
+                        x = int(center_x - box_w / 2)
+                        y = int(center_y - box_h / 2)
+
+                        boxes.append([x, y, box_w, box_h])
+                        scores.append(float(confidence))
+                        labels.append(self.COCO_LABELS[class_id] if class_id < len(self.COCO_LABELS) else f"class_{class_id}")
+
+            # Apply non-max suppression
+            if boxes:
+                indices = cv2.dnn.NMSBoxes(boxes, scores, threshold, 0.4)
+                if len(indices) > 0:
+                    boxes = [boxes[i] for i in indices.flatten()]
+                    scores = [scores[i] for i in indices.flatten()]
+                    labels = [labels[i] for i in indices.flatten()]
 
             # Draw boxes
             result_img = image.copy()
             for box, score, label in zip(boxes, scores, labels):
-                x1, y1, x2, y2 = [int(v) for v in box]
-                cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(result_img, f"{label}: {score:.2f}", (x1, y1 - 10),
+                x, y, box_w, box_h = box
+                cv2.rectangle(result_img, (x, y), (x + box_w, y + box_h), (0, 255, 0), 2)
+                cv2.putText(result_img, f"{label}: {score:.2f}", (x, y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            _, buffer = cv2.imencode('.jpg', result_img)
+            img_b64 = base64.b64encode(buffer).decode('utf-8')
+
+            return {
+                "success": True,
+                "detections": boxes,
+                "scores": scores,
+                "labels": labels,
+                "count": len(boxes),
+                "image": img_b64
+            }
+        except Exception as e:
+            return {"error": str(e), "success": False}
+
+
+class SimpleDetector(BaseVisionModel):
+    """Simple fallback detector using OpenCV Haar Cascades"""
+
+    def __init__(self):
+        super().__init__("detector")
+        self.face_cascade = None
+
+    def load_model(self):
+        """Load Haar cascade for face detection"""
+        try:
+            # Try OpenCV's built-in cascade
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            if os.path.exists(cascade_path):
+                self.face_cascade = cv2.CascadeClassifier(cascade_path)
+                print("Loaded: Face Detector (Haar Cascade)")
+                return True
+        except Exception as e:
+            print(f"Failed to load cascade: {e}")
+        return False
+
+    def process(self, image: np.ndarray, threshold: float = 0.5) -> Dict[str, Any]:
+        if self.face_cascade is None:
+            if not self.load_model():
+                return {"error": "No detector available", "success": False}
+
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            boxes, scores, labels = [], [], []
+            result_img = image.copy()
+
+            for (x, y, w, h) in faces:
+                boxes.append([int(x), int(y), int(w), int(h)])
+                scores.append(1.0)
+                labels.append("face")
+                cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(result_img, "face", (x, y - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             _, buffer = cv2.imencode('.jpg', result_img)
@@ -114,6 +220,15 @@ class GestureRecognizer(BaseVisionModel):
         try:
             import mediapipe as mp
 
+            # Initialize MediaPipe if needed
+            if self.mp_hands is None:
+                self.mp_hands = mp.solutions.hands.Hands(
+                    static_image_mode=False,
+                    max_num_hands=2,
+                    min_detection_confidence=0.7,
+                    min_tracking_confidence=0.5
+                )
+
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             results = self.mp_hands.process(image_rgb)
 
@@ -121,7 +236,6 @@ class GestureRecognizer(BaseVisionModel):
             result_img = image.copy()
 
             if results.multi_hand_landmarks:
-                from mediapipe.framework.formats import landmark_pb2
                 import mediapipe as mp_drawing
                 import mediapipe as mp_styles
 
@@ -134,8 +248,6 @@ class GestureRecognizer(BaseVisionModel):
                     )
 
                     # Simple gesture classification
-                    thumb_tip = hand_landmarks.landmark[4]
-                    index_tip = hand_landmarks.landmark[8]
                     fingers_extended = sum([
                         hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y,
                         hand_landmarks.landmark[12].y < hand_landmarks.landmark[10].y,
@@ -164,7 +276,7 @@ class GestureRecognizer(BaseVisionModel):
                 "image": img_b64
             }
         except ImportError:
-            return {"error": "MediaPipe not installed", "success": False}
+            return {"error": "MediaPipe not installed. Run: uv pip install mediapipe", "success": False}
         except Exception as e:
             return {"error": str(e), "success": False}
 
@@ -256,34 +368,24 @@ def load_models():
     """Load all vision models"""
     global _models
 
-    # Object Detector
-    try:
-        from transformers import DetrImageProcessor, DetrForObjectDetection
-        detector = ObjectDetector()
-        detector.processor = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
-        detector.model = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
-        detector.model.eval()
+    # Object Detector - try YOLO first, then fallback to simple detector
+    detector = ObjectDetector()
+    if detector.load_model():
         _models["detector"] = detector
-        print("Loaded: Object Detector")
-    except Exception as e:
-        print(f"Failed to load detector: {e}")
+    else:
+        # Use simple fallback detector
+        simple_detector = SimpleDetector()
+        if simple_detector.load_model():
+            _models["detector"] = simple_detector
 
     # Gesture Recognizer
     try:
         import mediapipe as mp
         gesture = GestureRecognizer()
-        gesture.mp_hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
-        )
         _models["gesture"] = gesture
-        print("Loaded: Gesture Recognizer")
+        print("Loaded: Gesture Recognizer (MediaPipe)")
     except ImportError:
         print("MediaPipe not available for gesture recognition")
-    except Exception as e:
-        print(f"Failed to load gesture: {e}")
 
     # Style Transfer (always available - uses OpenCV)
     _models["style_transfer"] = StyleTransfer()
