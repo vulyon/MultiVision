@@ -1,0 +1,28 @@
+# MultiVision Dependencies
+
+# Web Framework
+Django>=5.0
+djangorestframework>=3.14
+django-cors-headers>=4.3
+
+# Computer Vision
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
+
+# Hugging Face
+transformers>=4.36.0
+torch>=2.2.0
+torchvision>=0.17.0
+diffusers>=0.25.0
+accelerate>=0.26.0
+safetensors>=0.4.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# WebSocket
+channels>=4.0
+daphne>=4.0
+
+# Utilities
+python-dotenv==1.0.0
