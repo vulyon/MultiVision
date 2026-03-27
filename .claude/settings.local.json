@@ -6,7 +6,21 @@
       "Bash(uv sync:*)",
       "Bash(uv add:*)",
       "WebFetch(domain:www.figma.com)",
-      "Bash(claude mcp:*)"
+      "Bash(claude mcp:*)",
+      "mcp__figma__get_design_context",
+      "Bash(cd /root/.aworks/pyworks/MultiVision/frontend && npm install 2>&1)",
+      "Bash(cd /root/.aworks/pyworks/MultiVision/frontend && npm run build 2>&1)",
+      "Bash(cd /root/.aworks/pyworks/MultiVision && python manage.py check 2>&1)",
+      "Bash(cd /root/.aworks/pyworks/MultiVision && source .venv/bin/activate && python manage.py check 2>&1)",
+      "Bash(pkill -f \"manage.py runserver\" 2>/dev/null || true)",
+      "Bash(uv run python manage.py runserver 0.0.0.0:8000)",
+      "Bash(sleep 3 && curl -s http://localhost:8000/assets/index-Dl6Rnz6t.js | head -5)",
+      "Bash(sleep 8 && curl -s http://localhost:8000/ | head -15)",
+      "Bash(sleep 10 && curl -s http://localhost:8000/ | head -15)",
+      "Bash(curl -sI http://localhost:8000/static/assets/index-Dl6Rnz6t.js | head -5)",
+      "Bash(npm run build 2>&1)",
+      "Bash(npm run build 2>&1 && cat /root/.aworks/pyworks/MultiVision/templates/index.html | head -10)",
+      "Bash(curl -s http://localhost:8000/ | head -15)"
     ]
   }
 }

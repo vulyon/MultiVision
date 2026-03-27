@@ -36,7 +36,7 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-访问 http://localhost:8000
+访问 http://0.0.0.0:8000
 
 ## 可选依赖
 
